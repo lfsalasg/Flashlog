@@ -16,6 +16,7 @@ class Flashlog implements Psr\Log\LoggerInterface{
     public $savePath        = null;
     public $overwrite       = false;
     public $maxSize         = 100*1000*1000;
+    public $max_warnings    = 0;
     
     function __construct($arg=null){
         if(!$arg){
@@ -113,9 +114,9 @@ class Flashlog implements Psr\Log\LoggerInterface{
         array_push($this->logArray,$out);
         return 1;
     }
-
+    // Here start the functions used to handle the log file
     function printLog($format){
-        $out="The given format was not recognized";
+        $out="The given format $format was not recognized";
         switch($format){
             case ConstantFlashLog::PRINT_ARRAY:
                 $out=$this->logArray;
@@ -129,8 +130,39 @@ class Flashlog implements Psr\Log\LoggerInterface{
                     $out.=$row["timestamp"]."\t".$formattedLevel."\t".$row["content"]."\n";
                 }
             break;
+            default:
+                trigger_error($out,E_USER_WARNING);
+                return 0;
         }
         return $out;
+    }
+    function delete($lastRecords=1,$offset=0){
+        array_splice($this->logArray,$offset,-$lastRecords);
+        return 1;
+    }
+    function rebase($log){
+        $oldLog=$this->logArray;
+        $this->logArray=null;
+        $warnings=0;
+        foreach($log as $l){
+            if(isset($l["timestamp"]) && $l["level"] && $l["content"]){
+                array_push($this->logArray,[$l["timestamp"],$l["level"],$l["content"]]);
+            }else{
+                $this->warning("Invalid format, skipping record");
+                $warnings+=1;
+            }
+            if($warnings>$this->max_warnings){
+                break;
+            }
+            
+        }
+        if($warnings>$this->max_warnings){
+            $this->logArray=$oldLog;
+            $this->warning("Rebase failed. Too many warnings ($warnings). Restoring old log");
+            trigger_error("Rebase failed. Too many warnings ($warnings). Restoring old log",E_WARNING);
+            return 0;
+        }
+        return 1;
     }
 
     function saveInFile(){
@@ -161,7 +193,124 @@ class Flashlog implements Psr\Log\LoggerInterface{
         return 1;
     }
 
+    function loadFromFile($path,$action="rebase"){
+        if(!file_exists($path)){
+            trigger_error("File does not exist, skipping...",E_USER_WARNING);
+            return 0;
+        }
+        $logFile=fopen($path,"r");
+        $tempLog=array();
+        while(!feof($logFile)){
+            $line=fgets($logFile);
+            $record=explode("\t",$line);
+            array_push($tempLog,$record);
+        }
+        fclose($logFile);
+        switch($action){
+            case "rebase":
+                return $this->rebase($tempLog);
+            break;
+            case "append":
+                $newLog=new Flashlog;
+                if($newLog->rebase($tempLlog)){
+                    return $this->append($tempLlog);
+                }
+                
+            break;
+            default:
+                trigger_error("Given action $action was not recognized...",E_USER_WARNING);
+                return 0;
+        }
+        
+    }
 
+    function seeInfo(){
+        
+        $levels=[
+            LogLevel::EMERGENCY,
+            LogLevel::ALERT,
+            LogLevel::CRITICAL,
+            LogLevel::ERROR,
+            LogLevel::WARNING,
+            LogLevel::NOTICE,
+            LogLevel::INFO,
+            LogLevel::DEBUG
+        ];
+        $info=[
+            LogLevel::EMERGENCY => 0,
+            LogLevel::ALERT => 0,
+            LogLevel::CRITICAL => 0,
+            LogLevel::ERROR => 0,
+            LogLevel::WARNING => 0,
+            LogLevel::NOTICE => 0,
+            LogLevel::INFO => 0,
+            LogLevel::DEBU => 0
+        ];
+        foreach($levels as $l){
+            foreach($this->logArray as $record){
+                if($record["level"]==$l){
+                    $info[$l]+=1;
+                }
+            }
+        }
+        $info["total_records"] = count($this->logArray);
+        $info["begin_at"] = $this->logArray[0]["timestamp"];
+        $info["end_at"] = end($this->logArray)["timestamp"];
+        return $info;
+    }
+
+    function extract($levels){
+        $extract=new Flashlog;
+        $newLog=arrray();
+        foreach($this->logArray as $row){
+            if(in_array($row["level"],$levels)){
+                array_push($newLog,$row);
+            }
+        }
+        $extract->rebase($newLog);
+        return 1;
+    }
+
+    function append(...$logs){
+        foreach($logs as $log){
+            array_push($this->logArray,$log->print());
+        }
+        return 1;
+    }
+
+    function order(){
+        function cmp($a,$b){
+            if($a["date"]==$b["date"]){
+                return 0;
+            }
+            return ($a["date"]<$b["date"]) ? -1:1;
+        }
+        usort($this->logArray,"cmp");
+        return 1;
+    }
+    function check(){
+        $diagnose=array();
+        foreach($this->logArray as $row){
+            if(!isset($l["timestamp"]) || !$l["level"] || !$l["content"]){
+                array_push($diagnose,["SEVERE","Format isn't correct"]);
+            }
+            if(count($row)){
+                array_push($diagnose,["MODERATE","The record has more values than expected"]);
+            }
+            if(!in_array($row["level"],[LogLevel::EMERGENCY,
+            LogLevel::ALERT,
+            LogLevel::CRITICAL,
+            LogLevel::ERROR,
+            LogLevel::WARNING,
+            LogLevel::NOTICE,
+            LogLevel::INFO,
+            LogLevel::DEBUG])){
+                array_push($diagnose,["SEVERE","The level of this record does not belong to the standard levels."]);
+            }
+        }
+    }
 }
 
+class FlashlogHandler {
+}
 ?>
