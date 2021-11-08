@@ -1,0 +1,16 @@
+{
+    "name": "luis/flashlog",
+    "description": "A light-weight Logging library for PHP",
+    "type": "library",
+    "license": "GPL-3.0-or-later",
+    "authors": [
+        {
+            "name": "Luis Salas",
+            "email": "lfsalas@reallabs.com.co"
+        }
+    ],
+    "minimum-stability": "beta",
+    "require": {
+        "php": ">=7.4"
+    }
+}
