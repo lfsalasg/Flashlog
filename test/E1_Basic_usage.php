@@ -6,10 +6,12 @@ will be saved on the log object. If a string appears, the exception causes a WAR
 wich is saved on the log 
 */
 
-include("Flashlog.php");
+require("../Flashlog.php");
+
 $log=new FlashLog();
 
-for($i=0;$i<100;$i++){
+for($i=0;$i<20;$i++){
+    // Generate random records with the INFO and WARNING levels
     $e=random_int(0,100);
     $e = $e>70 ? "I'M TEXT" : $e;
     try{
@@ -23,6 +25,14 @@ for($i=0;$i<100;$i++){
     }
 }
 
+// Main Script
+
+echo $log->printLog(FlashlogConstants::PRINT_TABLE);
+$log->savePath="./example2.log";
+$log->overwrite=true;
+$log->maxSize=30*1024*1024;
+$log->saveInFile();
+
 function is_odd($n){
     if(!is_numeric($n)){
         throw new Exception("Input is not a number!");
@@ -33,9 +43,4 @@ function is_odd($n){
     return 0;
 }
 
-echo $log->printLog(ConstantFlashLog::PRINT_TABLE);
-$log->savePath="./test.log";
-$log->overwrite=false;
-$log->maxSize=30*1000;
-$log->saveInFile()
 ?>

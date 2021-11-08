@@ -5,10 +5,17 @@ require_once("InvalidArgumentException.php");
 
 use Psr\Log\LogLevel as LogLevel;
 
-class ConstantFlashLog{
+class FlashlogConstants{
     const PRINT_JSON    = 'json';
     const PRINT_TABLE   = 'table';
     const PRINT_ARRAY   = 'array';
+}
+
+class FlashlogException extends RuntimeException{
+    /*
+     * Use __toString() to get info about the message
+     * 
+    */
 }
 
 class Flashlog implements Psr\Log\LoggerInterface{
@@ -16,6 +23,7 @@ class Flashlog implements Psr\Log\LoggerInterface{
     public $savePath        = null;
     public $overwrite       = false;
     public $maxSize         = 100*1000*1000;
+    public $backup          = true;
     public $max_warnings    = 0;
     
     function __construct($arg=null){
@@ -115,15 +123,16 @@ class Flashlog implements Psr\Log\LoggerInterface{
         return 1;
     }
     // Here start the functions used to handle the log file
-    function printLog($format){
+    function printLog($format=FlashlogConstants::PRINT_ARRAY){
         $out="The given format $format was not recognized";
         switch($format){
-            case ConstantFlashLog::PRINT_ARRAY:
+            case FlashlogConstants::PRINT_ARRAY:
                 $out=$this->logArray;
-            case ConstantFlashLog::PRINT_JSON:
+            break;
+            case FlashlogConstants::PRINT_JSON:
                 $out=json_encode($this->logArray);
             break;
-            case ConstantFlashLog::PRINT_TABLE:
+            case FlashlogConstants::PRINT_TABLE:
                 $out="";
                 foreach($this->logArray as $row){
                     $formattedLevel=str_pad($row["level"],9," ");
@@ -137,29 +146,28 @@ class Flashlog implements Psr\Log\LoggerInterface{
         return $out;
     }
     function delete($lastRecords=1,$offset=0){
-        array_splice($this->logArray,$offset,-$lastRecords);
+        $this->logArray = array_splice($this->logArray,$offset,-$lastRecords);
         return 1;
     }
     function rebase($log){
         $oldLog=$this->logArray;
-        $this->logArray=null;
-        $warnings=0;
+        $this->logArray=array();
+        $warnings=array();
         foreach($log as $l){
-            if(isset($l["timestamp"]) && $l["level"] && $l["content"]){
-                array_push($this->logArray,[$l["timestamp"],$l["level"],$l["content"]]);
+            if(isset($l["timestamp"],$l["level"],$l["content"])){
+                array_push($this->logArray,$l);
             }else{
-                $this->warning("Invalid format, skipping record");
-                $warnings+=1;
+                array_push($warnings,"Invalid format, skipping record");
             }
-            if($warnings>$this->max_warnings){
+            if(count($warnings)>$this->max_warnings){
                 break;
             }
             
         }
-        if($warnings>$this->max_warnings){
+        if(count($warnings)>$this->max_warnings){
             $this->logArray=$oldLog;
-            $this->warning("Rebase failed. Too many warnings ($warnings). Restoring old log");
-            trigger_error("Rebase failed. Too many warnings ($warnings). Restoring old log",E_WARNING);
+            $this->warning("Rebase failed. Too many warnings (".count($warnings)."). Restoring old log");
+            trigger_error("Rebase failed. Too many warnings (".count($warnings)."). Restoring old log",E_USER_WARNING);
             return 0;
         }
         return 1;
@@ -173,21 +181,26 @@ class Flashlog implements Psr\Log\LoggerInterface{
             trigger_error("Cannot save log in NULL directory. Set the save path with Flashlog::savePath",E_USER_WARNING);
         }
         $mode = $this->overwrite ? "w+" : "a+";
-        if(filesize($this->savePath)<$this->maxSize){
+
+        if(!is_file($this->savePath)){
             $logFile=fopen($this->savePath,$mode);
-        }else{
+        }elseif(filesize($this->savePath)<$this->maxSize){
+            $logFile=fopen($this->savePath,$mode);
+        }elseif($this->backup){
             $pathParts=pathinfo($this->savePath);
             $i=1;
             while(file_exists($pathParts["dirname"]."/".$pathParts["filename"].".$i.".$pathParts["extension"]) && filesize($pathParts["dirname"]."/".$pathParts["filename"].".$i.".$pathParts["extension"])>$this->maxSize){
                 $i++;
             }
             $logFile=fopen($pathParts["dirname"]."/".$pathParts["filename"].".$i.".$pathParts["extension"],$mode);
+        }else{
+            trigger_error("Filesize greater than the allowed filesize");
         }
         
         if(!$logFile){
             trigger_error("Cannot open the given path ".$this->savePath,E_USER_WARNING);
         }
-        $newContent=$this->printLog(ConstantFlashLog::PRINT_TABLE);
+        $newContent=$this->printLog(FlashlogConstants::PRINT_TABLE);
         fwrite($logFile,$newContent);
         fclose($logFile);
         return 1;
@@ -203,19 +216,27 @@ class Flashlog implements Psr\Log\LoggerInterface{
         while(!feof($logFile)){
             $line=fgets($logFile);
             $record=explode("\t",$line);
-            array_push($tempLog,$record);
+            @$temp=[
+                "timestamp" => str_replace(" ","",$record[0]),
+                "level"     => str_replace(" ","",$record[1]),
+                "content"   => str_replace("\n","",$record[2]),
+            ];
+            array_push($tempLog,$temp);
         }
         fclose($logFile);
+        if(!end($tempLog)["timestamp"]){
+           $tempLog=array_splice($tempLog,0,-1); 
+        }
         switch($action){
             case "rebase":
                 return $this->rebase($tempLog);
             break;
             case "append":
                 $newLog=new Flashlog;
-                if($newLog->rebase($tempLlog)){
-                    return $this->append($tempLlog);
+                if($newLog->rebase($tempLog)){
+                    return $this->append($newLog);
                 }
-                
+                $newLog=null;
             break;
             default:
                 trigger_error("Given action $action was not recognized...",E_USER_WARNING);
@@ -244,46 +265,46 @@ class Flashlog implements Psr\Log\LoggerInterface{
             LogLevel::WARNING => 0,
             LogLevel::NOTICE => 0,
             LogLevel::INFO => 0,
-            LogLevel::DEBU => 0
+            LogLevel::DEBUG => 0
         ];
         foreach($levels as $l){
             foreach($this->logArray as $record){
-                if($record["level"]==$l){
+                if($record["level"] == $l){
                     $info[$l]+=1;
                 }
             }
         }
         $info["total_records"] = count($this->logArray);
-        $info["begin_at"] = $this->logArray[0]["timestamp"];
-        $info["end_at"] = end($this->logArray)["timestamp"];
+        $info["begins_at"] = $this->logArray[0]["timestamp"];
+        $info["ends_at"] = end($this->logArray)["timestamp"];
         return $info;
     }
 
     function extract($levels){
         $extract=new Flashlog;
-        $newLog=arrray();
+        $newLog=array();
         foreach($this->logArray as $row){
             if(in_array($row["level"],$levels)){
                 array_push($newLog,$row);
             }
         }
         $extract->rebase($newLog);
-        return 1;
+        return $extract;
     }
 
-    function append(...$logs){
+    function append(Flashlog ...$logs){
         foreach($logs as $log){
-            array_push($this->logArray,$log->print());
-        }
+            $this->logArray = array_merge($this->logArray,$log->printLog());
+        }        
         return 1;
     }
 
-    function order(){
+    function sort(){
         function cmp($a,$b){
-            if($a["date"]==$b["date"]){
+            if($a["timestamp"]==$b["timestamp"]){
                 return 0;
             }
-            return ($a["date"]<$b["date"]) ? -1:1;
+            return ($a["timestamp"]<$b["timestamp"]) ? -1:1;
         }
         usort($this->logArray,"cmp");
         return 1;
@@ -311,6 +332,4 @@ class Flashlog implements Psr\Log\LoggerInterface{
     }
 }
 
-class FlashlogHandler {
-}
 ?>
