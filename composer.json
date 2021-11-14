@@ -12,5 +12,8 @@
     "minimum-stability": "beta",
     "require": {
         "php": ">=7.4"
+    },
+    "suggest": {
+        "phpmailer/phpmailer":"For pushing info through Email"
     }
 }

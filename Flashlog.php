@@ -25,6 +25,8 @@ class Flashlog implements Psr\Log\LoggerInterface{
     public $maxSize         = 100*1000*1000;
     public $backup          = true;
     public $max_warnings    = 0;
+
+    protected $handlers    = array();
     
     function __construct($arg=null){
         if(!$arg){
@@ -38,9 +40,12 @@ class Flashlog implements Psr\Log\LoggerInterface{
         $out=[
             "timestamp" => date(DATE_RFC3339),
             "level"     => LogLevel::EMERGENCY,
-            "content"   => $message
+            "content"   => $message,
+            "context"   => $context
         ];
+        $out["content"] = $this->replaceKeys($out);
         array_push($this->logArray,$out);
+        $this->handle($out);
         return 1;
     }
 
@@ -48,9 +53,11 @@ class Flashlog implements Psr\Log\LoggerInterface{
         $out=[
             "timestamp" => date(DATE_RFC3339),
             "level"     => LogLevel::ALERT,
-            "content"   => $message
+            "content"   => $message,
+            "context"   => $context
         ];
         array_push($this->logArray,$out);
+        $this->handle($out);
         return 1;
     }
 
@@ -58,9 +65,11 @@ class Flashlog implements Psr\Log\LoggerInterface{
         $out=[
             "timestamp" => date(DATE_RFC3339),
             "level"     => LogLevel::CRITICAL,
-            "content"   => $message
+            "content"   => $message,            
+            "context"   => $context
         ];
         array_push($this->logArray,$out);
+        $this->handle($out);
         return 1;
     }
 
@@ -68,9 +77,11 @@ class Flashlog implements Psr\Log\LoggerInterface{
         $out=[
             "timestamp" => date(DATE_RFC3339),
             "level"     => LogLevel::ERROR,
-            "content"   => $message
+            "content"   => $message,
+            "context"   => $context
         ];
         array_push($this->logArray,$out);
+        $this->handle($out);
         return 1;
     }
 
@@ -78,18 +89,22 @@ class Flashlog implements Psr\Log\LoggerInterface{
         $out=[
             "timestamp" => date(DATE_RFC3339),
             "level"     => LogLevel::WARNING,
-            "content"   => $message
+            "content"   => $message,
+            "context"   => $context
         ];
         array_push($this->logArray,$out);
+        $this->handle($out);
         return 1;
     }
     function notice($message,$context=array()){
         $out=[
             "timestamp" => date(DATE_RFC3339),
             "level"     => LogLevel::NOTICE,
-            "content"   => $message
+            "content"   => $message,
+            "context"   => $context
         ];
         array_push($this->logArray,$out);
+        $this->handle($out);
         return 1;
     }
 
@@ -97,9 +112,11 @@ class Flashlog implements Psr\Log\LoggerInterface{
         $out=[
             "timestamp" => date(DATE_RFC3339),
             "level"     => LogLevel::INFO,
-            "content"   => $message
+            "content"   => $message,
+            "context"   => $context
         ];
         array_push($this->logArray,$out);
+        $this->handle($out);
         return 1;
     }
 
@@ -107,9 +124,11 @@ class Flashlog implements Psr\Log\LoggerInterface{
         $out=[
             "timestamp" => date(DATE_RFC3339),
             "level"     => LogLevel::DEBUG,
-            "content"   => $message
+            "content"   => $message,
+            "context"   => $context
         ];
         array_push($this->logArray,$out);
+        $this->handle($out);
         return 1;
     }
     
@@ -117,12 +136,16 @@ class Flashlog implements Psr\Log\LoggerInterface{
         $out=[
             "timestamp" => date(DATE_RFC3339),
             "level"     => $level,
-            "content"   => $message
+            "content"   => $message,
+            "context"   => $context
         ];
         array_push($this->logArray,$out);
+        $this->handle($out);
         return 1;
     }
+
     // Here start the functions used to handle the log file
+
     function printLog($format=FlashlogConstants::PRINT_ARRAY){
         $out="The given format $format was not recognized";
         switch($format){
@@ -154,7 +177,7 @@ class Flashlog implements Psr\Log\LoggerInterface{
         $this->logArray=array();
         $warnings=array();
         foreach($log as $l){
-            if(isset($l["timestamp"],$l["level"],$l["content"])){
+            if(isset($l["timestamp"],$l["level"],$l["content"],$l["context"])){
                 array_push($this->logArray,$l);
             }else{
                 array_push($warnings,"Invalid format, skipping record");
@@ -220,6 +243,7 @@ class Flashlog implements Psr\Log\LoggerInterface{
                 "timestamp" => str_replace(" ","",$record[0]),
                 "level"     => str_replace(" ","",$record[1]),
                 "content"   => str_replace("\n","",$record[2]),
+                "context"   => array()
             ];
             array_push($tempLog,$temp);
         }
@@ -329,6 +353,46 @@ class Flashlog implements Psr\Log\LoggerInterface{
                 array_push($diagnose,["SEVERE","The level of this record does not belong to the standard levels."]);
             }
         }
+    }
+
+    function pushHandler($levels,callable $handler,bool $flow=true){
+        if($levels=="*"){
+            $levels = [LogLevel::EMERGENCY,
+            LogLevel::ALERT,
+            LogLevel::CRITICAL,
+            LogLevel::ERROR,
+            LogLevel::WARNING,
+            LogLevel::NOTICE,
+            LogLevel::INFO,
+            LogLevel::DEBUG];
+        }elseif(is_string($levels)){
+            $levels=[$levels];
+        }
+        
+        array_push($this->handlers,[
+            "handler" =>$handler,
+            "level" => $levels,
+            "flow" => $flow]);
+    }
+
+    protected function handle(array $record){
+        foreach($this->handlers as $h){
+            if(in_array($record["level"],$h["level"])){
+                $h["handler"]($record);
+                if(!$h["flow"]){
+                    break;
+                }
+            }
+        }
+    }
+
+    protected function replaceKeys(array $out){
+        $msg=$out["content"];
+        foreach($out["context"] as $key=>$val){
+            $msg = str_replace("{".$key."}",$val,$msg);
+        }
+
+        return $msg;
     }
 }
 
